@@ -1,5 +1,7 @@
 import type { Project, TreeNode } from '../../types';
-import { projectService, nodeService } from '../storage';
+import { projectService } from '../storage';
+import { db } from '../storage/db';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ExportData {
   version: string;
@@ -44,7 +46,9 @@ export async function importFromJSON(file: File): Promise<void> {
 
         // Generate new IDs to avoid conflicts
         const idMap = new Map<string, string>();
-        const newProjectId = crypto.randomUUID();
+        
+        // Create new project ID
+        const newProjectId = uuidv4();
         idMap.set(data.project.id, newProjectId);
 
         // Create the project
@@ -56,30 +60,34 @@ export async function importFromJSON(file: File): Promise<void> {
           settings: data.project.settings,
         });
 
-        // Create nodes with new IDs
+        // Generate new IDs for all nodes first
         for (const node of data.nodes) {
-          const newNodeId = crypto.randomUUID();
-          idMap.set(node.id, newNodeId);
+          idMap.set(node.id, uuidv4());
         }
 
-        // Create nodes in order (parents first)
-        const sortedNodes = sortNodesByDepth(data.nodes);
-        for (const node of sortedNodes) {
-          await nodeService.create({
-            projectId: project.id,
-            parentId: node.parentId ? idMap.get(node.parentId) || null : null,
-            title: node.title,
-            description: node.description,
-            notes: node.notes,
-            status: node.status,
-            priority: node.priority,
-            estimatedHours: node.estimatedHours,
-            dueDate: node.dueDate ? new Date(node.dueDate) : null,
-            position: node.position,
-            order: node.order,
-            isCollapsed: node.isCollapsed,
-          });
-        }
+        // Create nodes with exact values - bypass nodeService.create to preserve order/position
+        const now = new Date();
+        const nodesToInsert: TreeNode[] = data.nodes.map((node) => ({
+          id: idMap.get(node.id)!,
+          projectId: project.id,
+          parentId: node.parentId ? idMap.get(node.parentId) || null : null,
+          title: node.title,
+          description: node.description,
+          notes: node.notes,
+          status: node.status,
+          completedAt: node.completedAt ? new Date(node.completedAt) : null,
+          priority: node.priority,
+          estimatedHours: node.estimatedHours,
+          dueDate: node.dueDate ? new Date(node.dueDate) : null,
+          position: node.position,
+          order: node.order,
+          isCollapsed: node.isCollapsed,
+          createdAt: node.createdAt ? new Date(node.createdAt) : now,
+          updatedAt: now,
+        }));
+
+        // Bulk insert all nodes at once
+        await db.nodes.bulkAdd(nodesToInsert);
 
         resolve();
       } catch (error) {
@@ -89,32 +97,5 @@ export async function importFromJSON(file: File): Promise<void> {
 
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsText(file);
-  });
-}
-
-function sortNodesByDepth(nodes: TreeNode[]): TreeNode[] {
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-  const depths = new Map<string, number>();
-
-  const getDepth = (nodeId: string): number => {
-    if (depths.has(nodeId)) return depths.get(nodeId)!;
-
-    const node = nodeMap.get(nodeId);
-    if (!node || !node.parentId) {
-      depths.set(nodeId, 0);
-      return 0;
-    }
-
-    const depth = getDepth(node.parentId) + 1;
-    depths.set(nodeId, depth);
-    return depth;
-  };
-
-  nodes.forEach((n) => getDepth(n.id));
-
-  return [...nodes].sort((a, b) => {
-    const depthA = depths.get(a.id) || 0;
-    const depthB = depths.get(b.id) || 0;
-    return depthA - depthB;
   });
 }

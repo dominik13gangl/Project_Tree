@@ -1,7 +1,24 @@
 import { useState } from 'react';
-import { Button, Input, Textarea } from '../ui';
-import { useProjectStore, useCurrentProject } from '../../stores';
+import { Button, Input, Textarea, Select } from '../ui';
+import { useProjectStore, useCurrentProject, useTreeStore } from '../../stores';
 import { PROJECT_COLORS } from '../../constants';
+import { getBackups, createBackup, deleteBackup, restoreFromBackup, downloadBackup } from '../../services/backup';
+
+const BACKUP_INTERVALS = [
+  { value: '5', label: '5 Minutes' },
+  { value: '15', label: '15 Minutes' },
+  { value: '30', label: '30 Minutes' },
+  { value: '60', label: '1 Hour' },
+  { value: '120', label: '2 Hours' },
+  { value: '240', label: '4 Hours' },
+];
+
+const MAX_BACKUPS_OPTIONS = [
+  { value: '3', label: '3 Backups' },
+  { value: '5', label: '5 Backups' },
+  { value: '10', label: '10 Backups' },
+  { value: '20', label: '20 Backups' },
+];
 
 interface ProjectSettingsProps {
   onClose: () => void;
@@ -9,7 +26,8 @@ interface ProjectSettingsProps {
 
 export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   const project = useCurrentProject();
-  const { updateProject, archiveProject, unarchiveProject, deleteProject } = useProjectStore();
+  const { updateProject, archiveProject, unarchiveProject, deleteProject, loadProjects } = useProjectStore();
+  const { nodes, loadNodes } = useTreeStore();
 
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
@@ -21,8 +39,24 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   const [showCompletedNodes, setShowCompletedNodes] = useState(
     project?.settings.showCompletedNodes ?? true
   );
+  
+  // Backup settings
+  const [backupEnabled, setBackupEnabled] = useState(
+    project?.settings.backup?.enabled ?? false
+  );
+  const [backupInterval, setBackupInterval] = useState(
+    String(project?.settings.backup?.intervalMinutes ?? 30)
+  );
+  const [maxBackups, setMaxBackups] = useState(
+    String(project?.settings.backup?.maxBackups ?? 5)
+  );
+  
+  const [showBackups, setShowBackups] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   if (!project) return null;
+
+  const backups = showBackups ? getBackups(project.id) : [];
 
   const handleSave = async () => {
     await updateProject(project.id, {
@@ -33,9 +67,48 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
       settings: {
         autoCompleteParent,
         showCompletedNodes,
+        backup: {
+          enabled: backupEnabled,
+          intervalMinutes: parseInt(backupInterval, 10),
+          maxBackups: parseInt(maxBackups, 10),
+          lastBackupAt: project.settings.backup?.lastBackupAt ?? null,
+        },
       },
     });
     onClose();
+  };
+
+  const handleCreateBackup = async () => {
+    await createBackup(project, nodes, false);
+    setShowBackups(true); // Refresh backup list
+    alert('Backup created successfully!');
+  };
+
+  const handleRestoreBackup = async (backup: ReturnType<typeof getBackups>[0]) => {
+    if (!confirm('Are you sure you want to restore this backup? Current data will be replaced.')) {
+      return;
+    }
+    
+    setIsRestoring(true);
+    try {
+      await restoreFromBackup(backup);
+      await loadNodes(project.id);
+      await loadProjects();
+      alert('Backup restored successfully!');
+    } catch (error) {
+      console.error('Restore error:', error);
+      alert('Failed to restore backup.');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handleDeleteBackup = (backupAt: string) => {
+    if (confirm('Are you sure you want to delete this backup?')) {
+      deleteBackup(project.id, backupAt);
+      setShowBackups(false);
+      setTimeout(() => setShowBackups(true), 0); // Force refresh
+    }
   };
 
   const handleArchive = async () => {
@@ -56,6 +129,11 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
       await deleteProject(project.id);
       onClose();
     }
+  };
+
+  const formatBackupDate = (isoString: string) => {
+    const date = new Date(isoString);
+    return date.toLocaleString();
   };
 
   return (
@@ -146,6 +224,110 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
             />
             <span className="text-sm">Show completed tasks</span>
           </label>
+        </div>
+
+        <div className="pt-4 border-t border-border">
+          <h3 className="font-medium mb-3">Auto-Backup Settings</h3>
+
+          <label className="flex items-center gap-2 cursor-pointer mb-3">
+            <input
+              type="checkbox"
+              checked={backupEnabled}
+              onChange={(e) => setBackupEnabled(e.target.checked)}
+              className="rounded border-input"
+            />
+            <span className="text-sm">Enable automatic backups</span>
+          </label>
+
+          {backupEnabled && (
+            <div className="space-y-3 ml-6">
+              <Select
+                label="Backup Interval"
+                value={backupInterval}
+                onChange={(e) => setBackupInterval(e.target.value)}
+                options={BACKUP_INTERVALS}
+              />
+              
+              <Select
+                label="Keep Maximum"
+                value={maxBackups}
+                onChange={(e) => setMaxBackups(e.target.value)}
+                options={MAX_BACKUPS_OPTIONS}
+              />
+              
+              {project.settings.backup?.lastBackupAt && (
+                <p className="text-xs text-muted-foreground">
+                  Last backup: {formatBackupDate(project.settings.backup.lastBackupAt)}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="mt-3 space-y-2">
+            <Button variant="secondary" onClick={handleCreateBackup} className="w-full" size="sm">
+              Create Backup Now
+            </Button>
+            
+            <Button 
+              variant="ghost" 
+              onClick={() => setShowBackups(!showBackups)} 
+              className="w-full" 
+              size="sm"
+            >
+              {showBackups ? 'Hide Backups' : `Show Backups (${getBackups(project.id).length})`}
+            </Button>
+          </div>
+
+          {showBackups && backups.length > 0 && (
+            <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+              {backups.map((backup) => (
+                <div 
+                  key={backup.backupAt} 
+                  className="p-2 bg-muted rounded text-xs flex items-center justify-between"
+                >
+                  <div>
+                    <div className="font-medium">{formatBackupDate(backup.backupAt)}</div>
+                    <div className="text-muted-foreground">
+                      {backup.isAutoBackup ? 'Auto' : 'Manual'} • {backup.nodes.length} nodes
+                    </div>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => downloadBackup(backup)}
+                      title="Download"
+                    >
+                      ⬇
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleRestoreBackup(backup)}
+                      disabled={isRestoring}
+                      title="Restore"
+                    >
+                      ↩
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleDeleteBackup(backup.backupAt)}
+                      title="Delete"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showBackups && backups.length === 0 && (
+            <p className="mt-3 text-xs text-muted-foreground text-center">
+              No backups yet
+            </p>
+          )}
         </div>
 
         <div className="pt-4 space-y-2">

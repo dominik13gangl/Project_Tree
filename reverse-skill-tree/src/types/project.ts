@@ -1,6 +1,14 @@
+export interface BackupSettings {
+  enabled: boolean;
+  intervalMinutes: number; // 5, 15, 30, 60, etc.
+  maxBackups: number; // Maximum number of backups to keep
+  lastBackupAt: string | null; // ISO string
+}
+
 export interface ProjectSettings {
   autoCompleteParent: boolean;
   showCompletedNodes: boolean;
+  backup: BackupSettings;
 }
 
 export interface Project {

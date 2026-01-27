@@ -1,11 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
-import type { Project, CreateProjectInput, UpdateProjectInput } from '../../types';
+import type { Project, CreateProjectInput, UpdateProjectInput, ProjectSettings } from '../../types';
 import { DEFAULT_PROJECT_COLOR } from '../../constants';
 
-const defaultSettings = {
+const defaultSettings: ProjectSettings = {
   autoCompleteParent: true,
   showCompletedNodes: true,
+  backup: {
+    enabled: false,
+    intervalMinutes: 30,
+    maxBackups: 5,
+    lastBackupAt: null,
+  },
 };
 
 export const projectService = {
