@@ -144,4 +144,45 @@ export const nodeService = {
   async bulkUpdate(nodes: TreeNode[]): Promise<void> {
     await db.nodes.bulkPut(nodes);
   },
+
+  // Repair circular references in a project
+  async repairProject(projectId: string): Promise<{ fixed: number; removed: number }> {
+    const nodes = await this.getByProjectId(projectId);
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    let fixed = 0;
+    let removed = 0;
+
+    // Find and fix circular references
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+
+      // Check for circular reference by walking up the tree
+      const visited = new Set<string>();
+      let current: TreeNode | undefined = node;
+      let hasCircle = false;
+
+      while (current?.parentId) {
+        if (visited.has(current.id)) {
+          hasCircle = true;
+          break;
+        }
+        visited.add(current.id);
+        current = nodeMap.get(current.parentId);
+      }
+
+      if (hasCircle) {
+        // Fix by setting parentId to null (make it a root node)
+        await this.update(node.id, { parentId: null });
+        fixed++;
+      }
+
+      // Also check if parentId points to non-existent node
+      if (node.parentId && !nodeMap.has(node.parentId)) {
+        await this.update(node.id, { parentId: null });
+        fixed++;
+      }
+    }
+
+    return { fixed, removed };
+  },
 };

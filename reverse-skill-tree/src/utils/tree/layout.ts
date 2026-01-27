@@ -11,7 +11,7 @@ interface LayoutNode {
   id: string;
   type: string;
   position: { x: number; y: number };
-  data: TreeNode & { depth: number };
+  data: TreeNode & { depth: number; hasChildren: boolean; isCollapsed: boolean };
   draggable: boolean;
 }
 
@@ -29,7 +29,8 @@ export function calculateNodeDepth(nodes: TreeNode[], nodeId: string): number {
 }
 
 export function calculateLayout(
-  nodes: TreeNode[]
+  nodes: TreeNode[],
+  collapsedNodeIds: Set<string> = new Set()
 ): { nodes: LayoutNode[]; edges: Edge[] } {
   if (nodes.length === 0) {
     return { nodes: [], edges: [] };
@@ -38,10 +39,33 @@ export function calculateLayout(
   const tree = buildTree(nodes);
   const layoutedNodes: LayoutNode[] = [];
 
+  // Check if a node has children
+  const hasChildren = (nodeId: string): boolean => {
+    return nodes.some(n => n.parentId === nodeId);
+  };
+
+  // Check if a node is hidden (parent is collapsed)
+  const isHidden = (nodeId: string): boolean => {
+    let current = nodes.find(n => n.id === nodeId);
+    while (current?.parentId) {
+      if (collapsedNodeIds.has(current.parentId)) {
+        return true;
+      }
+      current = nodes.find(n => n.id === current?.parentId);
+    }
+    return false;
+  };
+
   // Calculate the width needed for each subtree
   const subtreeWidths = new Map<string, number>();
 
   const calculateSubtreeWidth = (nodeId: string, children: TreeNode[]): number => {
+    // If this node is collapsed, only count its own width
+    if (collapsedNodeIds.has(nodeId)) {
+      subtreeWidths.set(nodeId, NODE_WIDTH);
+      return NODE_WIDTH;
+    }
+
     if (children.length === 0) {
       subtreeWidths.set(nodeId, NODE_WIDTH);
       return NODE_WIDTH;
@@ -84,18 +108,26 @@ export function calculateLayout(
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return;
 
+    // Skip hidden nodes
+    if (isHidden(nodeId)) return;
+
     const subtreeWidth = subtreeWidths.get(nodeId) || NODE_WIDTH;
     const centerX = startX + subtreeWidth / 2;
     const x = centerX - NODE_WIDTH / 2;
     const y = depth * (NODE_HEIGHT + VERTICAL_GAP);
+    const nodeHasChildren = hasChildren(nodeId);
+    const nodeIsCollapsed = collapsedNodeIds.has(nodeId);
 
     layoutedNodes.push({
       id: node.id,
       type: 'treeNode',
       position: { x, y },
-      data: { ...node, depth },
+      data: { ...node, depth, hasChildren: nodeHasChildren, isCollapsed: nodeIsCollapsed },
       draggable: false, // Disable free dragging
     });
+
+    // Don't position children if this node is collapsed
+    if (nodeIsCollapsed) return;
 
     // Position children
     const children = nodes.filter(n => n.parentId === nodeId).sort((a, b) => a.order - b.order);
@@ -115,9 +147,10 @@ export function calculateLayout(
     currentX += (subtreeWidths.get(root.id) || NODE_WIDTH) + HORIZONTAL_GAP;
   }
 
-  // Create edges
+  // Create edges (only for visible nodes)
+  const visibleNodeIds = new Set(layoutedNodes.map(n => n.id));
   const edges: Edge[] = nodes
-    .filter((node) => node.parentId)
+    .filter((node) => node.parentId && visibleNodeIds.has(node.id) && visibleNodeIds.has(node.parentId))
     .map((node) => ({
       id: `e-${node.parentId}-${node.id}`,
       source: node.parentId!,

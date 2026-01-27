@@ -5,7 +5,7 @@ import { TreeCanvas, TreeControls } from '../tree';
 import { NodeEditor } from '../nodes';
 import { useProjectStore, useCurrentProject, useTreeStore } from '../../stores';
 import { exportToJSON, importFromJSON, exportToPDF, exportToExcel, importFromExcel } from '../../services/export';
-import { Dialog, DialogFooter, Button } from '../ui';
+import { Dialog, DialogFooter, Button, ShortcutsPanel } from '../ui';
 import { useAutoBackup } from '../../hooks';
 
 export function MainLayout() {
@@ -172,6 +172,9 @@ export function MainLayout() {
         onChange={handleFileChange}
         className="hidden"
       />
+
+      {/* Shortcuts Panel - only show when a project is open */}
+      {currentProjectId && <ShortcutsPanel />}
     </div>
   );
 }

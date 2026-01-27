@@ -13,34 +13,131 @@ import '@xyflow/react/dist/style.css';
 import { useTreeStore, useUIStore, useFilterStore } from '../../stores';
 import { TreeNodeComponent } from './TreeNode';
 import { TreeContextMenu } from './TreeContextMenu';
-import type { TreeNode } from '../../types';
+import type { TreeNode, NodeStatus } from '../../types';
 
 const nodeTypes: NodeTypes = {
   treeNode: TreeNodeComponent,
 };
 
 export function TreeCanvas() {
-  const { flowNodes, flowEdges, nodes, selectedNodeId, deleteNode } = useTreeStore();
-  const { contextMenu, closeContextMenu } = useUIStore();
+  const { 
+    flowNodes, 
+    flowEdges, 
+    nodes, 
+    selectedNodeId, 
+    deleteNode, 
+    updateNode,
+    swapNodeOrder,
+    swapNodesFully,
+    moveNodeToParent,
+    getLeftNeighbor,
+    getRightNeighbor,
+    getNode,
+    getNodeDepth,
+    getFirstChild,
+  } = useTreeStore();
+  const { contextMenu, closeContextMenu, isNodeEditorOpen } = useUIStore();
   const { statusFilter, priorityFilter, searchQuery } = useFilterStore();
 
-  // Handle DEL key to delete selected node
+  // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && selectedNodeId) {
-        // Don't delete if user is typing in an input field
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      // Don't handle if user is typing in an input field
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
+      // DELETE - delete selected node
+      if (e.key === 'Delete' && selectedNodeId) {
         if (confirm('Möchten Sie dieses Ziel und alle Unterziele löschen?')) {
           await deleteNode(selectedNodeId);
+        }
+      }
+
+      // E - toggle completed status
+      if ((e.key === 'e' || e.key === 'E') && selectedNodeId) {
+        e.preventDefault();
+        const node = nodes.find(n => n.id === selectedNodeId);
+        if (node) {
+          const newStatus: NodeStatus = node.status === 'completed' ? 'open' : 'completed';
+          await updateNode(selectedNodeId, {
+            status: newStatus,
+            completedAt: newStatus === 'completed' ? new Date() : undefined,
+          });
+        }
+      }
+
+      // Arrow keys for moving nodes
+      if (selectedNodeId && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const node = getNode(selectedNodeId);
+        if (!node) return;
+
+        const isCtrl = e.ctrlKey || e.metaKey;
+
+        // HORIZONTAL MOVEMENT (Left/Right)
+        if (e.key === 'ArrowLeft') {
+          const leftNeighbor = getLeftNeighbor(selectedNodeId);
+          if (leftNeighbor) {
+            if (isCtrl) {
+              // Ctrl+Left: Swap fully (exchange positions and children)
+              await swapNodesFully(selectedNodeId, leftNeighbor.id);
+            } else {
+              // Left: Just swap order (horizontal position)
+              await swapNodeOrder(selectedNodeId, leftNeighbor.id);
+            }
+          }
+        }
+
+        if (e.key === 'ArrowRight') {
+          const rightNeighbor = getRightNeighbor(selectedNodeId);
+          if (rightNeighbor) {
+            if (isCtrl) {
+              // Ctrl+Right: Swap fully (exchange positions and children)
+              await swapNodesFully(selectedNodeId, rightNeighbor.id);
+            } else {
+              // Right: Just swap order (horizontal position)
+              await swapNodeOrder(selectedNodeId, rightNeighbor.id);
+            }
+          }
+        }
+
+        // VERTICAL MOVEMENT (Up/Down)
+        if (e.key === 'ArrowUp') {
+          // Move to parent's level (one level up)
+          if (node.parentId) {
+            const parent = getNode(node.parentId);
+            if (parent) {
+              if (isCtrl) {
+                // Ctrl+Up: Swap with parent (exchange positions and children)
+                await swapNodesFully(selectedNodeId, parent.id);
+              } else {
+                // Up: Move to grandparent level (become sibling of parent)
+                await moveNodeToParent(selectedNodeId, parent.parentId);
+              }
+            }
+          }
+        }
+
+        if (e.key === 'ArrowDown') {
+          // Move under left neighbor (one level down)
+          const leftNeighbor = getLeftNeighbor(selectedNodeId);
+          if (isCtrl) {
+            // Ctrl+Down: Swap with first child (if any)
+            const firstChild = getFirstChild(selectedNodeId);
+            if (firstChild) {
+              await swapNodesFully(selectedNodeId, firstChild.id);
+            }
+          } else if (leftNeighbor) {
+            // Down: Move under left neighbor
+            await moveNodeToParent(selectedNodeId, leftNeighbor.id);
+          }
         }
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeId, deleteNode]);
+  }, [selectedNodeId, deleteNode, updateNode, nodes, swapNodeOrder, swapNodesFully, moveNodeToParent, getLeftNeighbor, getRightNeighbor, getNode, getFirstChild]);
 
   // Filter nodes based on filters
   const filteredData = useMemo(() => {
@@ -127,11 +224,16 @@ export function TreeCanvas() {
   const [displayNodes, setNodes, onNodesChange] = useNodesState(filteredData.nodes as never[]);
   const [displayEdges, setEdges, onEdgesChange] = useEdgesState(filteredData.edges);
 
-  // Update display nodes when filtered data changes
+  // Update display nodes when filtered data changes, preserving selection
   useEffect(() => {
-    setNodes(filteredData.nodes as never[]);
+    // Add selected property to nodes based on selectedNodeId
+    const nodesWithSelection = filteredData.nodes.map(n => ({
+      ...n,
+      selected: n.id === selectedNodeId,
+    }));
+    setNodes(nodesWithSelection as never[]);
     setEdges(filteredData.edges);
-  }, [filteredData, setNodes, setEdges]);
+  }, [filteredData, setNodes, setEdges, selectedNodeId]);
 
   const handlePaneClick = useCallback(() => {
     closeContextMenu();

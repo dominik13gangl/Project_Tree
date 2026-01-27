@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { Button, Input, Badge } from '../ui';
 import { useTreeStore, useProjectStore, useFilterStore } from '../../stores';
 import { NODE_STATUS_OPTIONS, PRIORITY_OPTIONS } from '../../constants';
 
 export function TreeControls() {
-  const { createNode, getProjectProgress } = useTreeStore();
+  const { createNode, getProjectProgress, getMaxDepth, collapseAllAtDepth, expandAllAtDepth, collapseAll, expandAll, collapsedNodeIds } = useTreeStore();
   const { currentProjectId } = useProjectStore();
   const {
     statusFilter,
@@ -14,16 +15,19 @@ export function TreeControls() {
     setSearchQuery,
     resetFilters,
   } = useFilterStore();
+  
+  const [showLevelControls, setShowLevelControls] = useState(false);
 
   const progress = getProjectProgress();
   const hasFilters = statusFilter.length > 0 || priorityFilter.length > 0 || searchQuery;
+  const maxDepth = getMaxDepth();
 
   const handleAddRootNode = async () => {
     if (!currentProjectId) return;
     await createNode({
       projectId: currentProjectId,
       parentId: null,
-      title: 'New Goal',
+      title: 'Neues Ziel',
     });
   };
 
@@ -32,19 +36,32 @@ export function TreeControls() {
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <Button onClick={handleAddRootNode} size="sm">
-            + Add Goal
+            + Ziel hinzufügen
           </Button>
 
           {hasFilters && (
             <Button variant="ghost" size="sm" onClick={resetFilters}>
-              Clear Filters
+              Filter zurücksetzen
             </Button>
           )}
+          
+          {/* Level collapse controls toggle */}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setShowLevelControls(!showLevelControls)}
+            className="ml-2"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            Ebenen
+          </Button>
         </div>
 
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">
-            {progress.completed}/{progress.total} completed
+            {progress.completed}/{progress.total} erledigt
           </span>
           <div className="w-24 h-2 bg-secondary rounded-full overflow-hidden">
             <div
@@ -58,9 +75,45 @@ export function TreeControls() {
         </div>
       </div>
 
+      {/* Level collapse controls */}
+      {showLevelControls && (
+        <div className="flex items-center gap-2 p-2 bg-slate-100 dark:bg-slate-800 rounded-lg">
+          <span className="text-xs text-muted-foreground mr-2">Ebenen:</span>
+          
+          <Button variant="outline" size="sm" onClick={expandAll} className="text-xs h-7">
+            Alle ausklappen
+          </Button>
+          <Button variant="outline" size="sm" onClick={collapseAll} className="text-xs h-7">
+            Alle einklappen
+          </Button>
+          
+          <div className="w-px h-6 bg-border mx-2" />
+          
+          {Array.from({ length: maxDepth + 1 }, (_, depth) => (
+            <div key={depth} className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">E{depth}:</span>
+              <button
+                onClick={() => expandAllAtDepth(depth)}
+                className="w-6 h-6 rounded bg-green-100 hover:bg-green-200 text-green-700 text-xs flex items-center justify-center"
+                title={`Ebene ${depth} ausklappen`}
+              >
+                +
+              </button>
+              <button
+                onClick={() => collapseAllAtDepth(depth)}
+                className="w-6 h-6 rounded bg-orange-100 hover:bg-orange-200 text-orange-700 text-xs flex items-center justify-center"
+                title={`Ebene ${depth} einklappen`}
+              >
+                −
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-center gap-4">
         <Input
-          placeholder="Search tasks..."
+          placeholder="Ziele suchen..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="max-w-xs h-8"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button, Input, Textarea, Select } from '../ui';
 import { useTreeStore, useUIStore, useProjectStore } from '../../stores';
 import { NODE_STATUS_OPTIONS, PRIORITY_OPTIONS } from '../../constants';
@@ -20,6 +20,7 @@ export function NodeEditor() {
   const [dueDate, setDueDate] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Load node data
   useEffect(() => {
     if (node) {
       setTitle(node.title);
@@ -29,16 +30,15 @@ export function NodeEditor() {
       setPriority(node.priority);
       setEstimatedHours(node.estimatedHours?.toString() || '');
       setDueDate(node.dueDate ? new Date(node.dueDate).toISOString().split('T')[0] : '');
-      // Show advanced section if node has values for these fields
       setShowAdvanced(!!node.estimatedHours || !!node.dueDate);
     }
   }, [node]);
 
-  if (!isNodeEditorOpen || !node) return null;
-
-  const handleSave = async () => {
+  // Save function
+  const handleSave = useCallback(async () => {
+    if (!node) return;
     await updateNode(node.id, {
-      title,
+      title: title.trim() || 'Untitled',
       description: description || null,
       notes: notes || null,
       status,
@@ -47,7 +47,24 @@ export function NodeEditor() {
       dueDate: dueDate ? new Date(dueDate) : null,
     });
     closeNodeEditor();
-  };
+  }, [node, title, description, notes, status, priority, estimatedHours, dueDate, updateNode, closeNodeEditor]);
+
+  // Ctrl+S keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (isNodeEditorOpen && node) {
+          handleSave();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isNodeEditorOpen, node, handleSave]);
+
+  if (!isNodeEditorOpen || !node) return null;
 
   const handleAddChild = async () => {
     if (!currentProjectId) return;
@@ -120,7 +137,7 @@ export function NodeEditor() {
           />
 
           <Select
-            label="Priority"
+            label="Priorität"
             value={priority}
             onChange={(e) => setPriority(e.target.value as NodePriority)}
             options={PRIORITY_OPTIONS}
@@ -175,7 +192,7 @@ export function NodeEditor() {
 
         <div className="pt-4 space-y-2">
           <Button onClick={handleSave} className="w-full">
-            Speichern
+            Speichern (Strg+S)
           </Button>
 
           <Button variant="secondary" onClick={handleAddChild} className="w-full">

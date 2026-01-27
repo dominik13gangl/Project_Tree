@@ -5,12 +5,12 @@ import { PROJECT_COLORS } from '../../constants';
 import { getBackups, createBackup, deleteBackup, restoreFromBackup, downloadBackup } from '../../services/backup';
 
 const BACKUP_INTERVALS = [
-  { value: '5', label: '5 Minutes' },
-  { value: '15', label: '15 Minutes' },
-  { value: '30', label: '30 Minutes' },
-  { value: '60', label: '1 Hour' },
-  { value: '120', label: '2 Hours' },
-  { value: '240', label: '4 Hours' },
+  { value: '5', label: '5 Minuten' },
+  { value: '15', label: '15 Minuten' },
+  { value: '30', label: '30 Minuten' },
+  { value: '60', label: '1 Stunde' },
+  { value: '120', label: '2 Stunden' },
+  { value: '240', label: '4 Stunden' },
 ];
 
 const MAX_BACKUPS_OPTIONS = [
@@ -27,7 +27,7 @@ interface ProjectSettingsProps {
 export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   const project = useCurrentProject();
   const { updateProject, archiveProject, unarchiveProject, deleteProject, loadProjects } = useProjectStore();
-  const { nodes, loadNodes } = useTreeStore();
+  const { nodes, loadNodes, repairProject } = useTreeStore();
 
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
@@ -53,6 +53,7 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   
   const [showBackups, setShowBackups] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isRepairing, setIsRepairing] = useState(false);
 
   if (!project) return null;
 
@@ -104,10 +105,31 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   };
 
   const handleDeleteBackup = (backupAt: string) => {
-    if (confirm('Are you sure you want to delete this backup?')) {
+    if (confirm('Möchten Sie dieses Backup wirklich löschen?')) {
       deleteBackup(project.id, backupAt);
       setShowBackups(false);
       setTimeout(() => setShowBackups(true), 0); // Force refresh
+    }
+  };
+
+  const handleRepairProject = async () => {
+    if (!confirm('Möchten Sie das Projekt reparieren? Dies behebt zirkuläre Referenzen und fehlende Verknüpfungen.')) {
+      return;
+    }
+    
+    setIsRepairing(true);
+    try {
+      const result = await repairProject(project.id);
+      if (result.fixed > 0) {
+        alert(`Reparatur abgeschlossen! ${result.fixed} Problem(e) behoben.`);
+      } else {
+        alert('Keine Probleme gefunden. Das Projekt ist in Ordnung.');
+      }
+    } catch (error) {
+      console.error('Repair error:', error);
+      alert('Fehler bei der Reparatur.');
+    } finally {
+      setIsRepairing(false);
     }
   };
 
@@ -325,22 +347,38 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
 
           {showBackups && backups.length === 0 && (
             <p className="mt-3 text-xs text-muted-foreground text-center">
-              No backups yet
+              Keine Backups vorhanden
             </p>
           )}
         </div>
 
+        {/* Repair Section */}
+        <div className="pt-4 border-t border-border">
+          <h4 className="text-sm font-medium mb-2">Projekt reparieren</h4>
+          <p className="text-xs text-muted-foreground mb-3">
+            Falls das Projekt nicht richtig funktioniert oder sich aufhängt, können Sie es hier reparieren.
+          </p>
+          <Button 
+            variant="secondary" 
+            onClick={handleRepairProject} 
+            className="w-full"
+            disabled={isRepairing}
+          >
+            {isRepairing ? 'Repariere...' : '🔧 Projekt reparieren'}
+          </Button>
+        </div>
+
         <div className="pt-4 space-y-2">
           <Button onClick={handleSave} className="w-full">
-            Save Changes
+            Änderungen speichern
           </Button>
 
           <Button variant="secondary" onClick={handleArchive} className="w-full">
-            {project.isArchived ? 'Unarchive Project' : 'Archive Project'}
+            {project.isArchived ? 'Projekt wiederherstellen' : 'Projekt archivieren'}
           </Button>
 
           <Button variant="destructive" onClick={handleDelete} className="w-full">
-            Delete Project
+            Projekt löschen
           </Button>
         </div>
       </div>

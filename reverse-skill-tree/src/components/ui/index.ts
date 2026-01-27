@@ -6,3 +6,4 @@ export { Dialog, DialogFooter } from './Dialog';
 export { Select } from './Select';
 export { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
 export { ProgressBar } from './ProgressBar';
+export { ShortcutsPanel } from './ShortcutsPanel';
