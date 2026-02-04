@@ -316,7 +316,7 @@ export function TreeCanvas() {
         onPaneClick={handlePaneClick}
         fitView
         minZoom={0.1}
-        maxZoom={2}
+        maxZoom={5}
         defaultEdgeOptions={{
           type: 'tree',
           style: { stroke: 'hsl(var(--muted-foreground))', strokeWidth: 2 },

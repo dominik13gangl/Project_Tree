@@ -4,7 +4,7 @@ import { buildTree } from './traversal';
 
 // Base gaps at scale 1.0 - these will scale with depth
 const BASE_HORIZONTAL_GAP = 40;
-const BASE_VERTICAL_GAP = 60;
+const BASE_VERTICAL_GAP = 100;
 
 // Default node size settings
 const defaultNodeSize: NodeSizeSettings = {

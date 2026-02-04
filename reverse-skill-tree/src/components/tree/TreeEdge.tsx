@@ -17,8 +17,9 @@ function TreeEdgeInner({
   targetY,
   style,
 }: EdgeProps) {
-  // Calculate the vertical midpoint between source and target
-  const midY = sourceY + (targetY - sourceY) / 2;
+  // Calculate the vertical point where horizontal line will be
+  // Position it further down (45%) so the vertical line from parent is longer
+  const midY = sourceY + (targetY - sourceY) * 0.5;
   
   // Corner radius for rounded corners
   const radius = 8;

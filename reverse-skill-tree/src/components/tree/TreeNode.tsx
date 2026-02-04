@@ -23,7 +23,7 @@ const depthAddButtonColors = [
 
 function TreeNodeInner({ data, selected }: NodeProps) {
   const node = data as unknown as TreeNode & { depth: number; hasChildren: boolean; isCollapsed: boolean; scale: number };
-  const { selectNode, toggleNodeSelection, selectNodeWithDescendants, getNodeProgress, createNode, toggleCollapse, getSiblings, swapNodeOrder } = useTreeStore();
+  const { selectNode, toggleNodeSelection, selectNodeWithDescendants, getNodeProgress, createNode, toggleCollapse } = useTreeStore();
   const { currentProjectId } = useProjectStore();
   const currentProject = useCurrentProject();
   const { openNodeEditor } = useUIStore();
@@ -50,13 +50,6 @@ function TreeNodeInner({ data, selected }: NodeProps) {
   const statusConfig = NODE_STATUS_CONFIG[node.status];
   const priorityConfig = PRIORITY_CONFIG[node.priority];
   const progress = getNodeProgress(node.id);
-  const siblings = getSiblings(node.id);
-
-  // Find left and right neighbors
-  const allSiblings = [...siblings, node].sort((a, b) => a.order - b.order);
-  const currentIndex = allSiblings.findIndex(s => s.id === node.id);
-  const leftNeighbor = currentIndex > 0 ? allSiblings[currentIndex - 1] : null;
-  const rightNeighbor = currentIndex < allSiblings.length - 1 ? allSiblings[currentIndex + 1] : null;
 
   const handleClick = (e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -90,20 +83,6 @@ function TreeNodeInner({ data, selected }: NodeProps) {
     toggleCollapse(node.id);
   };
 
-  const handleMoveLeft = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (leftNeighbor) {
-      await swapNodeOrder(node.id, leftNeighbor.id);
-    }
-  };
-
-  const handleMoveRight = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (rightNeighbor) {
-      await swapNodeOrder(node.id, rightNeighbor.id);
-    }
-  };
-
   // Determine label based on depth
   const getDepthLabel = () => {
     if (depth === 0) return 'Hauptziel';
@@ -116,10 +95,8 @@ function TreeNodeInner({ data, selected }: NodeProps) {
   const scaledWidth = nodeSize.baseWidth * scale;
   const scaledHeight = nodeSize.baseHeight * scale;
 
-  // Scale factor for move buttons (relative to base)
+  // Scale factor for add button
   const buttonScale = Math.max(0.6, scale);
-  const buttonSize = Math.round(16 * buttonScale);
-  const buttonOffset = Math.round(20 * buttonScale);
 
   return (
     <div
@@ -137,34 +114,6 @@ function TreeNodeInner({ data, selected }: NodeProps) {
           className="!bg-transparent !border-0 !min-w-0 !min-h-0"
           style={{ width: 1, height: 1, opacity: 0, left: '50%', transform: 'translateX(-50%)' }}
         />
-      )}
-
-      {/* Move Left Button */}
-      {leftNeighbor && (
-        <button
-          onClick={handleMoveLeft}
-          className="absolute top-1/2 -translate-y-1/2 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
-          style={{ left: -buttonOffset, width: buttonSize, height: buttonSize }}
-          title="Nach links verschieben"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width={buttonSize * 0.6} height={buttonSize * 0.6} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-      )}
-
-      {/* Move Right Button */}
-      {rightNeighbor && (
-        <button
-          onClick={handleMoveRight}
-          className="absolute top-1/2 -translate-y-1/2 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
-          style={{ right: -buttonOffset, width: buttonSize, height: buttonSize }}
-          title="Nach rechts verschieben"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width={buttonSize * 0.6} height={buttonSize * 0.6} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
       )}
 
       {/* Main node container - scaled content inside */}
