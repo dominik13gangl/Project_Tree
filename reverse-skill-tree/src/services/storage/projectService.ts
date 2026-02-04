@@ -3,6 +3,38 @@ import { db } from './db';
 import type { Project, CreateProjectInput, UpdateProjectInput, ProjectSettings } from '../../types';
 import { DEFAULT_PROJECT_COLOR } from '../../constants';
 
+const defaultNodeSize = {
+  baseWidth: 280,
+  baseHeight: 120,
+  depthScalePercent: 85,
+  minScalePercent: 50,
+};
+
+// Migrate old nodeSize format to new format
+function migrateNodeSize(nodeSize: Record<string, number> | undefined): typeof defaultNodeSize {
+  if (!nodeSize) return defaultNodeSize;
+
+  // Check if it's already in new format
+  if ('baseWidth' in nodeSize && 'depthScalePercent' in nodeSize) {
+    return {
+      baseWidth: nodeSize.baseWidth ?? defaultNodeSize.baseWidth,
+      baseHeight: nodeSize.baseHeight ?? defaultNodeSize.baseHeight,
+      depthScalePercent: nodeSize.depthScalePercent ?? defaultNodeSize.depthScalePercent,
+      minScalePercent: nodeSize.minScalePercent ?? defaultNodeSize.minScalePercent,
+    };
+  }
+
+  // Convert from old format (mainGoalWidth, subGoalWidth, depthShrinkPercent, minWidth)
+  // to new format (baseWidth, baseHeight, depthScalePercent, minScalePercent)
+  const oldFormat = nodeSize as { mainGoalWidth?: number; subGoalWidth?: number; depthShrinkPercent?: number; minWidth?: number };
+  return {
+    baseWidth: oldFormat.mainGoalWidth ?? defaultNodeSize.baseWidth,
+    baseHeight: defaultNodeSize.baseHeight,
+    depthScalePercent: oldFormat.depthShrinkPercent ?? defaultNodeSize.depthScalePercent,
+    minScalePercent: oldFormat.minWidth ? Math.round((oldFormat.minWidth / (oldFormat.mainGoalWidth ?? 280)) * 100) : defaultNodeSize.minScalePercent,
+  };
+}
+
 const defaultSettings: ProjectSettings = {
   autoCompleteParent: true,
   showCompletedNodes: true,
@@ -12,19 +44,54 @@ const defaultSettings: ProjectSettings = {
     maxBackups: 5,
     lastBackupAt: null,
   },
+  categoryTypes: [],
+  nodeSize: defaultNodeSize,
 };
 
 export const projectService = {
   async getAll(): Promise<Project[]> {
-    return db.projects.orderBy('createdAt').reverse().toArray();
+    const projects = await db.projects.orderBy('createdAt').reverse().toArray();
+    // Migration: ensure all settings fields exist
+    return projects.map(project => ({
+      ...project,
+      settings: {
+        ...project.settings,
+        categoryTypes: (project.settings.categoryTypes ?? []).map(ct => ({
+          ...ct,
+          showInNodeView: ct.showInNodeView ?? false,
+        })),
+        nodeSize: migrateNodeSize(project.settings.nodeSize as Record<string, number> | undefined),
+      },
+    }));
   },
 
   async getActive(): Promise<Project[]> {
-    return db.projects.where('isArchived').equals(0).toArray();
+    const projects = await db.projects.where('isArchived').equals(0).toArray();
+    // Migration: ensure all settings fields exist
+    return projects.map(project => ({
+      ...project,
+      settings: {
+        ...project.settings,
+        categoryTypes: (project.settings.categoryTypes ?? []).map(ct => ({
+          ...ct,
+          showInNodeView: ct.showInNodeView ?? false,
+        })),
+        nodeSize: migrateNodeSize(project.settings.nodeSize as Record<string, number> | undefined),
+      },
+    }));
   },
 
   async getById(id: string): Promise<Project | undefined> {
-    return db.projects.get(id);
+    const project = await db.projects.get(id);
+    if (project) {
+      // Migration: ensure all settings fields exist
+      project.settings.categoryTypes = (project.settings.categoryTypes ?? []).map(ct => ({
+        ...ct,
+        showInNodeView: ct.showInNodeView ?? false,
+      }));
+      project.settings.nodeSize = migrateNodeSize(project.settings.nodeSize as Record<string, number> | undefined);
+    }
+    return project;
   },
 
   async create(input: CreateProjectInput): Promise<Project> {

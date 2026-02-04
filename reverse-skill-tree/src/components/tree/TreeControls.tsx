@@ -1,34 +1,42 @@
 import { useState } from 'react';
 import { Button, Input, Badge } from '../ui';
-import { useTreeStore, useProjectStore, useFilterStore } from '../../stores';
+import { useTreeStore, useProjectStore, useFilterStore, useCurrentProject } from '../../stores';
 import { NODE_STATUS_OPTIONS, PRIORITY_OPTIONS } from '../../constants';
 
 export function TreeControls() {
-  const { createNode, getProjectProgress, getMaxDepth, collapseAllAtDepth, expandAllAtDepth, collapseAll, expandAll, collapsedNodeIds } = useTreeStore();
+  const { createNode, getProjectProgress, getMaxDepth, collapseAllAtDepth, expandAllAtDepth, collapseAll, expandAll } = useTreeStore();
   const { currentProjectId } = useProjectStore();
+  const currentProject = useCurrentProject();
   const {
     statusFilter,
     priorityFilter,
     searchQuery,
+    categoryFilter,
     toggleStatusFilter,
     togglePriorityFilter,
     setSearchQuery,
+    toggleCategoryFilter,
     resetFilters,
   } = useFilterStore();
   
   const [showLevelControls, setShowLevelControls] = useState(false);
 
   const progress = getProjectProgress();
-  const hasFilters = statusFilter.length > 0 || priorityFilter.length > 0 || searchQuery;
+  const categoryTypes = currentProject?.settings.categoryTypes ?? [];
+  const hasCategoryFilters = Object.values(categoryFilter).some((ids) => ids.length > 0);
+  const hasFilters = statusFilter.length > 0 || priorityFilter.length > 0 || searchQuery || hasCategoryFilters;
   const maxDepth = getMaxDepth();
 
   const handleAddRootNode = async () => {
     if (!currentProjectId) return;
-    await createNode({
-      projectId: currentProjectId,
-      parentId: null,
-      title: 'Neues Ziel',
-    });
+    await createNode(
+      {
+        projectId: currentProjectId,
+        parentId: null,
+        title: 'Neues Ziel',
+      },
+      currentProject?.settings.categoryTypes
+    );
   };
 
   return (
@@ -146,6 +154,30 @@ export function TreeControls() {
             </Badge>
           ))}
         </div>
+
+        {/* Category Filters */}
+        {categoryTypes.map((categoryType) => (
+          <div key={categoryType.id} className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground mr-1">{categoryType.name}:</span>
+            <Badge
+              variant={(categoryFilter[categoryType.id] || []).includes('__none__') ? 'default' : 'outline'}
+              className="cursor-pointer text-[10px]"
+              onClick={() => toggleCategoryFilter(categoryType.id, '__none__')}
+            >
+              Keine
+            </Badge>
+            {categoryType.categories.map((category) => (
+              <Badge
+                key={category.id}
+                variant={(categoryFilter[categoryType.id] || []).includes(category.id) ? 'default' : 'outline'}
+                className="cursor-pointer text-[10px]"
+                onClick={() => toggleCategoryFilter(categoryType.id, category.id)}
+              >
+                {category.name}
+              </Badge>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ interface FilterState {
   priorityFilter: NodePriority[];
   searchQuery: string;
   showArchived: boolean;
+  categoryFilter: Record<string, string[]>; // { categoryTypeId: [categoryId, ...] }
 
   // Actions
   setStatusFilter: (statuses: NodeStatus[]) => void;
@@ -14,6 +15,9 @@ interface FilterState {
   togglePriorityFilter: (priority: NodePriority) => void;
   setSearchQuery: (query: string) => void;
   setShowArchived: (show: boolean) => void;
+  setCategoryFilter: (categoryTypeId: string, categoryIds: string[]) => void;
+  toggleCategoryFilter: (categoryTypeId: string, categoryId: string) => void;
+  resetCategoryFilters: () => void;
   resetFilters: () => void;
 }
 
@@ -22,6 +26,7 @@ const initialState = {
   priorityFilter: [] as NodePriority[],
   searchQuery: '',
   showArchived: false,
+  categoryFilter: {} as Record<string, string[]>,
 };
 
 export const useFilterStore = create<FilterState>((set) => ({
@@ -48,6 +53,31 @@ export const useFilterStore = create<FilterState>((set) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
 
   setShowArchived: (show) => set({ showArchived: show }),
+
+  setCategoryFilter: (categoryTypeId, categoryIds) =>
+    set((state) => ({
+      categoryFilter: {
+        ...state.categoryFilter,
+        [categoryTypeId]: categoryIds,
+      },
+    })),
+
+  toggleCategoryFilter: (categoryTypeId, categoryId) =>
+    set((state) => {
+      const currentIds = state.categoryFilter[categoryTypeId] || [];
+      const newIds = currentIds.includes(categoryId)
+        ? currentIds.filter((id) => id !== categoryId)
+        : [...currentIds, categoryId];
+      return {
+        categoryFilter: {
+          ...state.categoryFilter,
+          [categoryTypeId]: newIds,
+        },
+      };
+    }),
+
+  resetCategoryFilters: () =>
+    set({ categoryFilter: {} }),
 
   resetFilters: () => set(initialState),
 }));

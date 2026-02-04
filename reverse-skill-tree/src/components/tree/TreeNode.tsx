@@ -4,7 +4,7 @@ import type { TreeNode } from '../../types';
 import { NODE_STATUS_CONFIG } from '../../constants/nodeStatus';
 import { PRIORITY_CONFIG } from '../../constants/priorities';
 import { Badge, ProgressBar } from '../ui';
-import { useTreeStore, useUIStore, useProjectStore } from '../../stores';
+import { useTreeStore, useUIStore, useProjectStore, useCurrentProject } from '../../stores';
 
 // Border colors for different depth levels (group colors)
 const depthBorderColors = [
@@ -22,14 +22,30 @@ const depthAddButtonColors = [
 ];
 
 function TreeNodeInner({ data, selected }: NodeProps) {
-  const node = data as unknown as TreeNode & { depth: number; hasChildren: boolean; isCollapsed: boolean };
-  const { selectNode, getNodeProgress, createNode, toggleCollapse, getSiblings, swapNodeOrder } = useTreeStore();
+  const node = data as unknown as TreeNode & { depth: number; hasChildren: boolean; isCollapsed: boolean; scale: number };
+  const { selectNode, toggleNodeSelection, selectNodeWithDescendants, getNodeProgress, createNode, toggleCollapse, getSiblings, swapNodeOrder } = useTreeStore();
   const { currentProjectId } = useProjectStore();
+  const currentProject = useCurrentProject();
   const { openNodeEditor } = useUIStore();
+
+  // Get category types that should be shown in node view
+  const categoryTypes = currentProject?.settings.categoryTypes ?? [];
+  const visibleCategoryTypes = categoryTypes.filter(ct => ct.showInNodeView);
+
+  // Get node size settings
+  const nodeSize = currentProject?.settings.nodeSize ?? {
+    baseWidth: 280,
+    baseHeight: 120,
+    depthScalePercent: 85,
+    minScalePercent: 50,
+  };
 
   const depth = node.depth ?? 0;
   const borderColor = depthBorderColors[Math.min(depth, depthBorderColors.length - 1)];
   const addButtonColor = depthAddButtonColors[Math.min(depth, depthAddButtonColors.length - 1)];
+
+  // Use scale from layout data
+  const scale = node.scale ?? 1;
 
   const statusConfig = NODE_STATUS_CONFIG[node.status];
   const priorityConfig = PRIORITY_CONFIG[node.priority];
@@ -42,9 +58,20 @@ function TreeNodeInner({ data, selected }: NodeProps) {
   const leftNeighbor = currentIndex > 0 ? allSiblings[currentIndex - 1] : null;
   const rightNeighbor = currentIndex < allSiblings.length - 1 ? allSiblings[currentIndex + 1] : null;
 
-  const handleClick = () => {
-    selectNode(node.id);
-    openNodeEditor();
+  const handleClick = (e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+Click: Toggle selection
+      toggleNodeSelection(node.id);
+      openNodeEditor();
+    } else if (e.shiftKey) {
+      // Shift+Click: Select node and all descendants
+      selectNodeWithDescendants(node.id);
+      openNodeEditor();
+    } else {
+      // Normal click: Single selection
+      selectNode(node.id);
+      openNodeEditor();
+    }
   };
 
   const handleAddChild = async (e: React.MouseEvent) => {
@@ -85,14 +112,30 @@ function TreeNodeInner({ data, selected }: NodeProps) {
     return `Ebene ${depth + 1}`;
   };
 
+  // Calculate actual scaled dimensions
+  const scaledWidth = nodeSize.baseWidth * scale;
+  const scaledHeight = nodeSize.baseHeight * scale;
+
+  // Scale factor for move buttons (relative to base)
+  const buttonScale = Math.max(0.6, scale);
+  const buttonSize = Math.round(16 * buttonScale);
+  const buttonOffset = Math.round(20 * buttonScale);
+
   return (
-    <div className="relative">
-      {/* Target handle at top */}
+    <div
+      className="relative"
+      style={{
+        width: scaledWidth,
+        height: scaledHeight,
+      }}
+    >
+      {/* Hidden target handle for edge connections - positioned at center of scaled container */}
       {depth > 0 && (
         <Handle
           type="target"
           position={Position.Top}
-          className="!bg-slate-400 !w-3 !h-3 !border-2 !border-white"
+          className="!bg-transparent !border-0 !min-w-0 !min-h-0"
+          style={{ width: 1, height: 1, opacity: 0, left: '50%', transform: 'translateX(-50%)' }}
         />
       )}
 
@@ -100,10 +143,11 @@ function TreeNodeInner({ data, selected }: NodeProps) {
       {leftNeighbor && (
         <button
           onClick={handleMoveLeft}
-          className="absolute -left-5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
+          className="absolute top-1/2 -translate-y-1/2 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
+          style={{ left: -buttonOffset, width: buttonSize, height: buttonSize }}
           title="Nach links verschieben"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width={buttonSize * 0.6} height={buttonSize * 0.6} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
@@ -113,20 +157,27 @@ function TreeNodeInner({ data, selected }: NodeProps) {
       {rightNeighbor && (
         <button
           onClick={handleMoveRight}
-          className="absolute -right-5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
+          className="absolute top-1/2 -translate-y-1/2 rounded-full bg-slate-500/60 hover:bg-slate-600 text-white flex items-center justify-center transition-colors z-20"
+          style={{ right: -buttonOffset, width: buttonSize, height: buttonSize }}
           title="Nach rechts verschieben"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width={buttonSize * 0.6} height={buttonSize * 0.6} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
       )}
 
-      {/* Main node container */}
+      {/* Main node container - scaled content inside */}
       <div
-        className={`rounded-xl shadow-lg min-w-[240px] max-w-[280px] cursor-pointer transition-all hover:shadow-xl border-[3px] ${borderColor} ${statusConfig.nodeBg} ${
+        className={`absolute top-0 left-0 rounded-xl shadow-lg cursor-pointer transition-all hover:shadow-xl border-[3px] overflow-hidden ${borderColor} ${statusConfig.nodeBg} ${
           selected ? 'ring-4 ring-yellow-400 ring-offset-2' : ''
         }`}
+        style={{
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          width: nodeSize.baseWidth,
+          height: nodeSize.baseHeight,
+        }}
         onClick={handleClick}
       >
         {/* Header with depth indicator */}
@@ -183,9 +234,29 @@ function TreeNodeInner({ data, selected }: NodeProps) {
 
           {/* Status and Progress */}
           <div className="flex items-center justify-between gap-2 mt-2">
-            <Badge className={`${statusConfig.bgColor} ${statusConfig.color} text-[10px] border border-current`}>
-              {statusConfig.label}
-            </Badge>
+            <div className="flex items-center gap-1 flex-wrap">
+              <Badge className={`${statusConfig.bgColor} ${statusConfig.color} text-[10px] border border-current`}>
+                {statusConfig.label}
+              </Badge>
+
+              {/* Category badges */}
+              {visibleCategoryTypes.map(categoryType => {
+                const categoryId = node.categories?.[categoryType.id];
+                if (!categoryId) return null;
+                const category = categoryType.categories.find(c => c.id === categoryId);
+                if (!category) return null;
+                return (
+                  <Badge
+                    key={categoryType.id}
+                    variant="outline"
+                    className="text-[9px] bg-slate-100 text-slate-700 border-slate-300"
+                    title={categoryType.name}
+                  >
+                    {category.name}
+                  </Badge>
+                );
+              })}
+            </div>
 
             {progress.total > 1 && (
               <div className="flex items-center gap-1">
@@ -203,23 +274,29 @@ function TreeNodeInner({ data, selected }: NodeProps) {
         </div>
       </div>
 
-      {/* Source handle and Add button at bottom */}
+      {/* Source handle at bottom - positioned at center of scaled container */}
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!bg-transparent !w-0 !h-0 !border-0"
+        className="!bg-transparent !border-0 !min-w-0 !min-h-0"
+        style={{ width: 1, height: 1, opacity: 0, left: '50%', transform: 'translateX(-50%)' }}
       />
 
-      {/* Add Child Button */}
+      {/* Add Child Button - scaled */}
       <button
         onClick={handleAddChild}
-        className={`absolute -bottom-4 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110 z-10 ${addButtonColor} text-white`}
+        className={`absolute left-1/2 -translate-x-1/2 rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110 z-10 ${addButtonColor} text-white`}
+        style={{
+          bottom: -Math.round(16 * buttonScale),
+          width: Math.round(32 * buttonScale),
+          height: Math.round(32 * buttonScale),
+        }}
         title="Unterziel hinzufügen"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
+          width={Math.round(18 * buttonScale)}
+          height={Math.round(18 * buttonScale)}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

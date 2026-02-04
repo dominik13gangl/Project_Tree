@@ -7,11 +7,13 @@ import {
   useNodesState,
   useEdgesState,
   type NodeTypes,
+  type EdgeTypes,
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useTreeStore, useUIStore, useFilterStore } from '../../stores';
 import { TreeNodeComponent } from './TreeNode';
+import { TreeEdge } from './TreeEdge';
 import { TreeContextMenu } from './TreeContextMenu';
 import type { TreeNode, NodeStatus } from '../../types';
 
@@ -19,13 +21,18 @@ const nodeTypes: NodeTypes = {
   treeNode: TreeNodeComponent,
 };
 
+const edgeTypes: EdgeTypes = {
+  tree: TreeEdge,
+};
+
 export function TreeCanvas() {
-  const { 
-    flowNodes, 
-    flowEdges, 
-    nodes, 
-    selectedNodeId, 
-    deleteNode, 
+  const {
+    flowNodes,
+    flowEdges,
+    nodes,
+    selectedNodeIds,
+    deleteNode,
+    deleteNodes,
     updateNode,
     swapNodeOrder,
     swapNodesFully,
@@ -33,11 +40,14 @@ export function TreeCanvas() {
     getLeftNeighbor,
     getRightNeighbor,
     getNode,
-    getNodeDepth,
     getFirstChild,
+    clearSelection,
   } = useTreeStore();
-  const { contextMenu, closeContextMenu, isNodeEditorOpen } = useUIStore();
-  const { statusFilter, priorityFilter, searchQuery } = useFilterStore();
+  const { contextMenu, closeContextMenu, closeNodeEditor, isNodeEditorOpen } = useUIStore();
+  const { statusFilter, priorityFilter, searchQuery, categoryFilter } = useFilterStore();
+
+  // For single selection operations, use the first selected node
+  const selectedNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null;
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -46,14 +56,32 @@ export function TreeCanvas() {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
-      // DELETE - delete selected node
-      if (e.key === 'Delete' && selectedNodeId) {
-        if (confirm('Möchten Sie dieses Ziel und alle Unterziele löschen?')) {
-          await deleteNode(selectedNodeId);
+      // ESC - close editor and clear selection
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (isNodeEditorOpen) {
+          closeNodeEditor();
+        }
+        clearSelection();
+        return;
+      }
+
+      // DELETE - delete selected node(s)
+      if (e.key === 'Delete' && selectedNodeIds.length > 0) {
+        const count = selectedNodeIds.length;
+        const message = count === 1
+          ? 'Möchten Sie dieses Ziel und alle Unterziele löschen?'
+          : `Möchten Sie ${count} Ziele und alle Unterziele löschen?`;
+        if (confirm(message)) {
+          if (count === 1) {
+            await deleteNode(selectedNodeIds[0]);
+          } else {
+            await deleteNodes(selectedNodeIds);
+          }
         }
       }
 
-      // E - toggle completed status
+      // E - toggle completed status (only for single selection)
       if ((e.key === 'e' || e.key === 'E') && selectedNodeId) {
         e.preventDefault();
         const node = nodes.find(n => n.id === selectedNodeId);
@@ -61,7 +89,6 @@ export function TreeCanvas() {
           const newStatus: NodeStatus = node.status === 'completed' ? 'open' : 'completed';
           await updateNode(selectedNodeId, {
             status: newStatus,
-            completedAt: newStatus === 'completed' ? new Date() : undefined,
           });
         }
       }
@@ -137,7 +164,7 @@ export function TreeCanvas() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeId, deleteNode, updateNode, nodes, swapNodeOrder, swapNodesFully, moveNodeToParent, getLeftNeighbor, getRightNeighbor, getNode, getFirstChild]);
+  }, [selectedNodeId, selectedNodeIds, deleteNode, deleteNodes, updateNode, nodes, swapNodeOrder, swapNodesFully, moveNodeToParent, getLeftNeighbor, getRightNeighbor, getNode, getFirstChild, clearSelection, closeNodeEditor, isNodeEditorOpen]);
 
   // Filter nodes based on filters
   const filteredData = useMemo(() => {
@@ -211,6 +238,43 @@ export function TreeCanvas() {
       filteredNodes = filteredNodes.filter((n) => nodeIdsToShow.has(n.id));
     }
 
+    // Category filter
+    const activeCategoryFilters = Object.entries(categoryFilter).filter(
+      ([_, categoryIds]) => categoryIds.length > 0
+    );
+
+    if (activeCategoryFilters.length > 0) {
+      const nodeIdsToShow = new Set<string>();
+
+      filteredNodes.forEach((node) => {
+        // Check if node matches ALL category type filters (AND between types)
+        const matchesAllTypes = activeCategoryFilters.every(([categoryTypeId, selectedCategoryIds]) => {
+          const nodeCategory = node.categories?.[categoryTypeId];
+          const hasNoCategory = !nodeCategory;
+
+          // OR within type: matches if node has one of selected categories OR '__none__' is selected and node has no category
+          const matchesSelected = selectedCategoryIds.includes(nodeCategory);
+          const matchesEmpty = selectedCategoryIds.includes('__none__') && hasNoCategory;
+
+          return matchesSelected || matchesEmpty;
+        });
+
+        if (matchesAllTypes) {
+          nodeIdsToShow.add(node.id);
+          // Include ancestors
+          let current = node;
+          while (current.parentId) {
+            nodeIdsToShow.add(current.parentId);
+            const parent = nodes.find((n) => n.id === current.parentId);
+            if (!parent) break;
+            current = parent;
+          }
+        }
+      });
+
+      filteredNodes = filteredNodes.filter((n) => nodeIdsToShow.has(n.id));
+    }
+
     const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
 
     return {
@@ -219,21 +283,22 @@ export function TreeCanvas() {
         (e) => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
       ),
     };
-  }, [nodes, flowNodes, flowEdges, statusFilter, priorityFilter, searchQuery]);
+  }, [nodes, flowNodes, flowEdges, statusFilter, priorityFilter, searchQuery, categoryFilter]);
 
   const [displayNodes, setNodes, onNodesChange] = useNodesState(filteredData.nodes as never[]);
   const [displayEdges, setEdges, onEdgesChange] = useEdgesState(filteredData.edges);
 
   // Update display nodes when filtered data changes, preserving selection
   useEffect(() => {
-    // Add selected property to nodes based on selectedNodeId
+    // Add selected property to nodes based on selectedNodeIds
+    const selectedSet = new Set(selectedNodeIds);
     const nodesWithSelection = filteredData.nodes.map(n => ({
       ...n,
-      selected: n.id === selectedNodeId,
+      selected: selectedSet.has(n.id),
     }));
     setNodes(nodesWithSelection as never[]);
     setEdges(filteredData.edges);
-  }, [filteredData, setNodes, setEdges, selectedNodeId]);
+  }, [filteredData, setNodes, setEdges, selectedNodeIds]);
 
   const handlePaneClick = useCallback(() => {
     closeContextMenu();
@@ -247,12 +312,13 @@ export function TreeCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onPaneClick={handlePaneClick}
         fitView
         minZoom={0.1}
         maxZoom={2}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'tree',
           style: { stroke: 'hsl(var(--muted-foreground))', strokeWidth: 2 },
         }}
       >

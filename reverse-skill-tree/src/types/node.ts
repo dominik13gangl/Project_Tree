@@ -16,6 +16,7 @@ export interface TreeNode {
   position: { x: number; y: number };
   order: number;
   isCollapsed: boolean;
+  categories: Record<string, string>; // { categoryTypeId: categoryId }
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +44,7 @@ export interface CreateNodeInput {
   position?: { x: number; y: number };
   order?: number;
   isCollapsed?: boolean;
+  categories?: Record<string, string>;
 }
 
 export interface UpdateNodeInput {
@@ -57,4 +59,5 @@ export interface UpdateNodeInput {
   position?: { x: number; y: number };
   order?: number;
   isCollapsed?: boolean;
+  categories?: Record<string, string>;
 }

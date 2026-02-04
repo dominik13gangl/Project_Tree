@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Button, Input, Textarea, Select } from '../ui';
+import { CategoryTypeEditor } from './CategoryTypeEditor';
 import { useProjectStore, useCurrentProject, useTreeStore } from '../../stores';
 import { PROJECT_COLORS } from '../../constants';
 import { getBackups, createBackup, deleteBackup, restoreFromBackup, downloadBackup } from '../../services/backup';
+import type { CategoryType, NodeSizeSettings } from '../../types';
 
 const BACKUP_INTERVALS = [
   { value: '5', label: '5 Minuten' },
@@ -27,7 +29,7 @@ interface ProjectSettingsProps {
 export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   const project = useCurrentProject();
   const { updateProject, archiveProject, unarchiveProject, deleteProject, loadProjects } = useProjectStore();
-  const { nodes, loadNodes, repairProject } = useTreeStore();
+  const { nodes, loadNodes, repairProject, setNodeSize: setStoreNodeSize } = useTreeStore();
 
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
@@ -54,6 +56,23 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
   const [showBackups, setShowBackups] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isRepairing, setIsRepairing] = useState(false);
+  const [keepAspectRatio, setKeepAspectRatio] = useState(true);
+
+  // Category types
+  const [categoryTypes, setCategoryTypes] = useState<CategoryType[]>(
+    project?.settings.categoryTypes ?? []
+  );
+
+  // Node size settings
+  const defaultNodeSize: NodeSizeSettings = {
+    baseWidth: 280,
+    baseHeight: 120,
+    depthScalePercent: 85,
+    minScalePercent: 50,
+  };
+  const [nodeSize, setNodeSize] = useState<NodeSizeSettings>(
+    project?.settings.nodeSize ?? defaultNodeSize
+  );
 
   if (!project) return null;
 
@@ -74,8 +93,12 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
           maxBackups: parseInt(maxBackups, 10),
           lastBackupAt: project.settings.backup?.lastBackupAt ?? null,
         },
+        categoryTypes,
+        nodeSize,
       },
     });
+    // Update tree layout with new node size
+    setStoreNodeSize(nodeSize);
     onClose();
   };
 
@@ -246,6 +269,94 @@ export function ProjectSettings({ onClose }: ProjectSettingsProps) {
             />
             <span className="text-sm">Show completed tasks</span>
           </label>
+        </div>
+
+        <div className="pt-4 border-t border-border">
+          <h3 className="font-medium mb-3">Kategorien</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            Definieren Sie Kategorietypen (z.B. "Tunnel", "Region") und deren Kategorien.
+          </p>
+          <CategoryTypeEditor
+            categoryTypes={categoryTypes}
+            onChange={setCategoryTypes}
+          />
+        </div>
+
+        <div className="pt-4 border-t border-border">
+          <h3 className="font-medium mb-3">Zielgrößen-Skalierung</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            Tiefere Ebenen werden proportional kleiner dargestellt. So sehen Sie auf den ersten Blick die wichtigsten Ziele und können bei Bedarf reinzoomen.
+          </p>
+
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={keepAspectRatio}
+                onChange={(e) => setKeepAspectRatio(e.target.checked)}
+                className="rounded border-input"
+              />
+              <span className="text-sm">Seitenverhältnis beibehalten</span>
+            </label>
+
+            <Input
+              label="Basis-Breite (px)"
+              type="number"
+              min="200"
+              max="500"
+              value={nodeSize.baseWidth}
+              onChange={(e) => {
+                const newWidth = parseInt(e.target.value) || 280;
+                if (keepAspectRatio) {
+                  const ratio = nodeSize.baseHeight / nodeSize.baseWidth;
+                  setNodeSize(prev => ({ ...prev, baseWidth: newWidth, baseHeight: Math.round(newWidth * ratio) }));
+                } else {
+                  setNodeSize(prev => ({ ...prev, baseWidth: newWidth }));
+                }
+              }}
+            />
+
+            <Input
+              label="Basis-Höhe (px)"
+              type="number"
+              min="80"
+              max="300"
+              value={nodeSize.baseHeight}
+              onChange={(e) => {
+                const newHeight = parseInt(e.target.value) || 120;
+                if (keepAspectRatio) {
+                  const ratio = nodeSize.baseWidth / nodeSize.baseHeight;
+                  setNodeSize(prev => ({ ...prev, baseHeight: newHeight, baseWidth: Math.round(newHeight * ratio) }));
+                } else {
+                  setNodeSize(prev => ({ ...prev, baseHeight: newHeight }));
+                }
+              }}
+            />
+
+            <Input
+              label="Skalierung pro Ebene (%)"
+              type="number"
+              min="50"
+              max="100"
+              value={nodeSize.depthScalePercent}
+              onChange={(e) => setNodeSize(prev => ({ ...prev, depthScalePercent: parseInt(e.target.value) || 85 }))}
+            />
+            <p className="text-xs text-muted-foreground -mt-2">
+              Jede tiefere Ebene wird um diesen Faktor kleiner (z.B. 85% = Ebene 1 ist 85% von Ebene 0).
+            </p>
+
+            <Input
+              label="Minimale Skalierung (%)"
+              type="number"
+              min="30"
+              max="100"
+              value={nodeSize.minScalePercent}
+              onChange={(e) => setNodeSize(prev => ({ ...prev, minScalePercent: parseInt(e.target.value) || 50 }))}
+            />
+            <p className="text-xs text-muted-foreground -mt-2">
+              Ziele werden nicht kleiner als dieser Prozentsatz der Basis-Größe.
+            </p>
+          </div>
         </div>
 
         <div className="pt-4 border-t border-border">

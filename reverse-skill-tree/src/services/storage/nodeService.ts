@@ -4,11 +4,24 @@ import type { TreeNode, CreateNodeInput, UpdateNodeInput } from '../../types';
 
 export const nodeService = {
   async getByProjectId(projectId: string): Promise<TreeNode[]> {
-    return db.nodes.where('projectId').equals(projectId).toArray();
+    const nodes = await db.nodes.where('projectId').equals(projectId).toArray();
+    // Migration: ensure categories exists for all nodes
+    return nodes.map(node => ({
+      ...node,
+      categories: node.categories ?? {},
+    }));
   },
 
   async getById(id: string): Promise<TreeNode | undefined> {
-    return db.nodes.get(id);
+    const node = await db.nodes.get(id);
+    if (node) {
+      // Migration: ensure categories exists
+      return {
+        ...node,
+        categories: node.categories ?? {},
+      };
+    }
+    return node;
   },
 
   async getChildren(parentId: string): Promise<TreeNode[]> {
@@ -50,6 +63,7 @@ export const nodeService = {
       position: input.position ?? { x: 0, y: 0 },
       order: maxOrder + 1,
       isCollapsed: input.isCollapsed ?? false,
+      categories: input.categories ?? {},
       createdAt: now,
       updatedAt: now,
     };

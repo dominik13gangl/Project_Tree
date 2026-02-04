@@ -82,6 +82,7 @@ export async function importFromJSON(file: File): Promise<void> {
           position: node.position,
           order: node.order,
           isCollapsed: node.isCollapsed,
+          categories: node.categories ?? {},
           createdAt: node.createdAt ? new Date(node.createdAt) : now,
           updatedAt: now,
         }));

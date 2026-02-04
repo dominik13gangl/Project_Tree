@@ -19,7 +19,8 @@ export function ProjectList({ onCreateProject, onImport }: ProjectListProps) {
 
   const handleSelectProject = async (projectId: string) => {
     selectProject(projectId);
-    await loadNodes(projectId);
+    const project = projects.find(p => p.id === projectId);
+    await loadNodes(projectId, project?.settings.nodeSize);
   };
 
   // Clear nodes when going back (called from Header, not here)

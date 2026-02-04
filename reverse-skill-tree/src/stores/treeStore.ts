@@ -1,9 +1,17 @@
 import { create } from 'zustand';
 import type { Edge } from '@xyflow/react';
-import type { TreeNode, CreateNodeInput, UpdateNodeInput, NodeProgress } from '../types';
+import type { TreeNode, CreateNodeInput, UpdateNodeInput, NodeProgress, CategoryType, NodeSizeSettings } from '../types';
 import { nodeService } from '../services/storage';
 import { calculateLayout, calculateNodeDepth } from '../utils/tree/layout';
 import { calculateNodeProgress, calculateProjectProgress, getParentsToAutoComplete } from '../utils/tree/progress';
+
+// Default node size settings
+const defaultNodeSize: NodeSizeSettings = {
+  baseWidth: 280,
+  baseHeight: 120,
+  depthScalePercent: 85,
+  minScalePercent: 50,
+};
 
 interface LayoutNode {
   id: string;
@@ -16,23 +24,30 @@ interface TreeState {
   nodes: TreeNode[];
   flowNodes: LayoutNode[];
   flowEdges: Edge[];
-  selectedNodeId: string | null;
+  selectedNodeIds: string[];
   isLoading: boolean;
   error: string | null;
   collapsedNodeIds: Set<string>;
+  nodeSize: NodeSizeSettings;
 
   // Actions
-  loadNodes: (projectId: string) => Promise<void>;
+  loadNodes: (projectId: string, nodeSize?: NodeSizeSettings) => Promise<void>;
+  setNodeSize: (nodeSize: NodeSizeSettings) => void;
   clearNodes: () => void;
-  createNode: (input: CreateNodeInput) => Promise<TreeNode>;
+  createNode: (input: CreateNodeInput, categoryTypes?: CategoryType[]) => Promise<TreeNode>;
   updateNode: (id: string, input: UpdateNodeInput, autoComplete?: boolean) => Promise<void>;
+  updateNodes: (ids: string[], input: UpdateNodeInput, autoComplete?: boolean) => Promise<void>;
   deleteNode: (id: string) => Promise<void>;
+  deleteNodes: (ids: string[]) => Promise<void>;
   moveNode: (id: string, newParentId: string | null) => Promise<void>;
   reorderNode: (id: string, newOrder: number) => Promise<void>;
   swapNodeOrder: (nodeId1: string, nodeId2: string) => Promise<void>;
   swapNodesFully: (nodeId1: string, nodeId2: string) => Promise<void>;
   moveNodeToParent: (nodeId: string, newParentId: string | null) => Promise<void>;
   selectNode: (nodeId: string | null) => void;
+  toggleNodeSelection: (nodeId: string) => void;
+  selectNodeWithDescendants: (nodeId: string) => void;
+  clearSelection: () => void;
   updateLayout: () => void;
   toggleCollapse: (nodeId: string) => void;
   collapseAllAtDepth: (depth: number) => void;
@@ -41,6 +56,7 @@ interface TreeState {
   expandAll: () => void;
   repairProject: (projectId: string) => Promise<{ fixed: number; removed: number }>;
   getFirstChild: (nodeId: string) => TreeNode | undefined;
+  getDescendants: (nodeId: string) => string[];
 
   // Selectors
   getNode: (id: string) => TreeNode | undefined;
@@ -58,12 +74,21 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   nodes: [],
   flowNodes: [],
   flowEdges: [],
-  selectedNodeId: null,
+  selectedNodeIds: [],
   isLoading: false,
   error: null,
   collapsedNodeIds: new Set<string>(),
+  nodeSize: defaultNodeSize,
 
-  loadNodes: async (projectId) => {
+  setNodeSize: (nodeSize) => {
+    set({ nodeSize });
+    // Recalculate layout with new size
+    const { nodes, collapsedNodeIds } = get();
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, nodeSize);
+    set({ flowNodes, flowEdges });
+  },
+
+  loadNodes: async (projectId, nodeSize) => {
     set({ isLoading: true, error: null });
     try {
       let nodes = await nodeService.getByProjectId(projectId);
@@ -107,21 +132,36 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       
       // Initialize collapsed state from nodes
       const collapsedNodeIds = new Set(nodes.filter(n => n.isCollapsed).map(n => n.id));
-      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
-      set({ nodes, flowNodes, flowEdges, isLoading: false, collapsedNodeIds });
+      const currentNodeSize = nodeSize ?? get().nodeSize;
+      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, currentNodeSize);
+      set({ nodes, flowNodes, flowEdges, isLoading: false, collapsedNodeIds, nodeSize: currentNodeSize });
     } catch (error) {
       set({ error: (error as Error).message, isLoading: false });
     }
   },
 
   clearNodes: () => {
-    set({ nodes: [], flowNodes: [], flowEdges: [], selectedNodeId: null, collapsedNodeIds: new Set() });
+    set({ nodes: [], flowNodes: [], flowEdges: [], selectedNodeIds: [], collapsedNodeIds: new Set() });
   },
 
-  createNode: async (input) => {
-    const node = await nodeService.create(input);
+  createNode: async (input, categoryTypes) => {
+    // Apply default categories from project settings if not provided
+    let finalInput = input;
+    if (categoryTypes && !input.categories) {
+      const defaultCategories: Record<string, string> = {};
+      for (const categoryType of categoryTypes) {
+        if (categoryType.defaultCategoryId) {
+          defaultCategories[categoryType.id] = categoryType.defaultCategoryId;
+        }
+      }
+      if (Object.keys(defaultCategories).length > 0) {
+        finalInput = { ...input, categories: defaultCategories };
+      }
+    }
+
+    const node = await nodeService.create(finalInput);
     const nodes = [...get().nodes, node];
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
     return node;
   },
@@ -143,19 +183,67 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       }
     }
 
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
+    set({ nodes, flowNodes, flowEdges });
+  },
+
+  updateNodes: async (ids, input, autoComplete = true) => {
+    let nodes = get().nodes;
+
+    for (const id of ids) {
+      const updated = await nodeService.update(id, input);
+      if (!updated) continue;
+
+      nodes = nodes.map((n) => (n.id === id ? updated : n));
+
+      // Auto-complete parent nodes if all children are completed
+      if (autoComplete && input.status === 'completed') {
+        const parentsToComplete = getParentsToAutoComplete(nodes, id);
+        for (const parentId of parentsToComplete) {
+          const parentUpdated = await nodeService.update(parentId, { status: 'completed' });
+          if (parentUpdated) {
+            nodes = nodes.map((n) => (n.id === parentId ? parentUpdated : n));
+          }
+        }
+      }
+    }
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
   },
 
   deleteNode: async (id) => {
     await nodeService.delete(id);
     const nodes = get().nodes.filter((n) => n.id !== id && !isDescendantOf(get().nodes, n.id, id));
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({
       nodes,
       flowNodes,
       flowEdges,
-      selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
+      selectedNodeIds: get().selectedNodeIds.filter(sid => sid !== id),
+    });
+  },
+
+  deleteNodes: async (ids) => {
+    // Delete all nodes and their descendants
+    for (const id of ids) {
+      await nodeService.delete(id);
+    }
+    const deletedSet = new Set(ids);
+    const nodes = get().nodes.filter((n) => {
+      if (deletedSet.has(n.id)) return false;
+      // Also filter out descendants
+      for (const deletedId of ids) {
+        if (isDescendantOf(get().nodes, n.id, deletedId)) return false;
+      }
+      return true;
+    });
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
+    set({
+      nodes,
+      flowNodes,
+      flowEdges,
+      selectedNodeIds: [],
     });
   },
 
@@ -165,7 +253,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     if (!updatedNode) return;
 
     const nodes = get().nodes.map((n) => (n.id === id ? updatedNode : n));
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
   },
 
@@ -174,9 +262,9 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     // Reload all nodes to get updated order values
     const node = get().nodes.find(n => n.id === id);
     if (!node) return;
-    
+
     const allNodes = await nodeService.getByProjectId(node.projectId);
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(allNodes, get().collapsedNodeIds);
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(allNodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes: allNodes, flowNodes, flowEdges });
   },
 
@@ -198,8 +286,8 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       if (n.id === nodeId2) return { ...n, order: order1 };
       return n;
     });
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
   },
 
@@ -251,8 +339,8 @@ export const useTreeStore = create<TreeState>((set, get) => ({
         if (childChildren.some(c => c.id === n.id)) return { ...n, parentId: parent.id };
         return n;
       });
-      
-      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+
+      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
       set({ nodes, flowNodes, flowEdges });
       return;
     }
@@ -287,8 +375,8 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       if (children2.some(c => c.id === n.id)) return { ...n, parentId: nodeId1 };
       return n;
     });
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
   },
 
@@ -337,18 +425,38 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     // Reload to get correct order values after shifts
     const projectId = node.projectId;
     const nodes = await nodeService.getByProjectId(projectId);
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, get().collapsedNodeIds, get().nodeSize);
     set({ nodes, flowNodes, flowEdges });
   },
 
   selectNode: (nodeId) => {
-    set({ selectedNodeId: nodeId });
+    set({ selectedNodeIds: nodeId ? [nodeId] : [] });
+  },
+
+  toggleNodeSelection: (nodeId) => {
+    const current = get().selectedNodeIds;
+    if (current.includes(nodeId)) {
+      set({ selectedNodeIds: current.filter(id => id !== nodeId) });
+    } else {
+      set({ selectedNodeIds: [...current, nodeId] });
+    }
+  },
+
+  selectNodeWithDescendants: (nodeId) => {
+    const descendants = get().getDescendants(nodeId);
+    const current = get().selectedNodeIds;
+    const newSelection = new Set([...current, nodeId, ...descendants]);
+    set({ selectedNodeIds: Array.from(newSelection) });
+  },
+
+  clearSelection: () => {
+    set({ selectedNodeIds: [] });
   },
 
   updateLayout: () => {
-    const { nodes, collapsedNodeIds } = get();
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+    const { nodes, collapsedNodeIds, nodeSize } = get();
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, nodeSize);
     set({ flowNodes, flowEdges });
   },
 
@@ -359,18 +467,18 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     } else {
       collapsedNodeIds.add(nodeId);
     }
-    
+
     // Also update the node in the database
     nodeService.update(nodeId, { isCollapsed: collapsedNodeIds.has(nodeId) });
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(get().nodes, collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(get().nodes, collapsedNodeIds, get().nodeSize);
     set({ collapsedNodeIds, flowNodes, flowEdges });
   },
 
   collapseAllAtDepth: (depth) => {
     const nodes = get().nodes;
     const collapsedNodeIds = new Set(get().collapsedNodeIds);
-    
+
     for (const node of nodes) {
       const nodeDepth = calculateNodeDepth(nodes, node.id);
       // Only collapse nodes that have children
@@ -380,15 +488,15 @@ export const useTreeStore = create<TreeState>((set, get) => ({
         nodeService.update(node.id, { isCollapsed: true });
       }
     }
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, get().nodeSize);
     set({ collapsedNodeIds, flowNodes, flowEdges });
   },
 
   expandAllAtDepth: (depth) => {
     const nodes = get().nodes;
     const collapsedNodeIds = new Set(get().collapsedNodeIds);
-    
+
     for (const node of nodes) {
       const nodeDepth = calculateNodeDepth(nodes, node.id);
       if (nodeDepth === depth && collapsedNodeIds.has(node.id)) {
@@ -396,15 +504,15 @@ export const useTreeStore = create<TreeState>((set, get) => ({
         nodeService.update(node.id, { isCollapsed: false });
       }
     }
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, get().nodeSize);
     set({ collapsedNodeIds, flowNodes, flowEdges });
   },
 
   collapseAll: () => {
     const nodes = get().nodes;
     const collapsedNodeIds = new Set<string>();
-    
+
     for (const node of nodes) {
       const hasChildren = nodes.some(n => n.parentId === node.id);
       if (hasChildren) {
@@ -412,23 +520,23 @@ export const useTreeStore = create<TreeState>((set, get) => ({
         nodeService.update(node.id, { isCollapsed: true });
       }
     }
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, get().nodeSize);
     set({ collapsedNodeIds, flowNodes, flowEdges });
   },
 
   expandAll: () => {
     const nodes = get().nodes;
     const collapsedNodeIds = new Set<string>();
-    
+
     // Update all nodes to not collapsed
     for (const node of nodes) {
       if (get().collapsedNodeIds.has(node.id)) {
         nodeService.update(node.id, { isCollapsed: false });
       }
     }
-    
-    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+
+    const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, get().nodeSize);
     set({ collapsedNodeIds, flowNodes, flowEdges });
   },
 
@@ -489,13 +597,26 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       .sort((a, b) => a.order - b.order)[0];
   },
 
+  getDescendants: (nodeId) => {
+    const descendants: string[] = [];
+    const collectDescendants = (parentId: string) => {
+      const children = get().nodes.filter(n => n.parentId === parentId);
+      for (const child of children) {
+        descendants.push(child.id);
+        collectDescendants(child.id);
+      }
+    };
+    collectDescendants(nodeId);
+    return descendants;
+  },
+
   repairProject: async (projectId) => {
     const result = await nodeService.repairProject(projectId);
     if (result.fixed > 0) {
       // Reload nodes after repair
       const nodes = await nodeService.getByProjectId(projectId);
       const collapsedNodeIds = new Set(nodes.filter(n => n.isCollapsed).map(n => n.id));
-      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds);
+      const { nodes: flowNodes, edges: flowEdges } = calculateLayout(nodes, collapsedNodeIds, get().nodeSize);
       set({ nodes, flowNodes, flowEdges, collapsedNodeIds });
     }
     return result;
